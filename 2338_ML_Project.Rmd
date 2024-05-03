@@ -1,0 +1,351 @@
+---
+title: "2338 ML Final Project_(Logistic/Tree/RF models)"
+author: "Zichuan Yu"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warnings = FALSE, fig.align = 'center',  eval = TRUE)
+```
+
+Required Packages
+
+```{r, message = FALSE}
+library(tidyverse)
+library(tree)
+library(caret)
+library(randomForest)
+library(neuralnet)
+```
+
+
+
+## Data preprocessing
+
+```{r}
+mydata <- read.csv("wdbc.data", header = FALSE)
+
+attribute <- c("radius", "texture", "perimeter", "area", 
+               "smoothness", "compactness", "concavity", "concave_points", 
+               "symmetry", "fractal_dim")
+
+group <- c("mean", "sd", "largest")
+
+new_names <- as.vector(outer(attribute, group, 
+                             FUN = function(x,y) paste(x, y, sep = "_")))
+
+new_names <- c("ID", "diagnosis", new_names)
+
+new_names
+```
+
+```{r}
+names(mydata) <- new_names
+head(mydata)
+```
+
+convert the outcome variable `diagnosis` into a factor. 
+
+```{r}
+# convert the outcome varaible into a factor
+mydata$diagnosis <- as.factor(mydata$diagnosis)
+```
+
+
+
+## data split for training (80%) and testing (20%) sets 
+
+```{r}
+set.seed(2024)
+train_ind <- sample(1:nrow(mydata), 0.8*nrow(mydata))
+train_data <- mydata[train_ind, ]
+test_data <- mydata[-train_ind, ]
+
+# remove the first column ID
+train_data <- train_data[ , -1]
+test_data <- test_data[ , -1]
+```
+
+
+## Decision Tree
+
+
+#### Tree model building
+
+```{r}
+diagnosis_tree <- tree(diagnosis ~ . , data = train_data)
+
+cv_tree <- cv.tree(diagnosis_tree)
+
+bestsize <- cv_tree$size[which.min(cv_tree$dev)] 
+
+prune_tree <- prune.tree(diagnosis_tree, best = bestsize)
+
+plot(prune_tree) 
+
+text(prune_tree, pretty = 0)
+```
+
+#### Tree model prediction performance
+
+```{r}
+train_pred_tree <- predict(prune_tree, 
+                           newdata = train_data, 
+                           type = "class") 
+
+test_pred_tree <- predict(prune_tree, 
+                          newdata = test_data, 
+                          type = "class")
+
+train_error_tree <- mean(train_pred_tree != train_data$diagnosis) 
+
+test_error_tree <- mean(test_pred_tree != test_data$diagnosis) 
+
+train_error_tree
+test_error_tree
+```
+
+#### Additional metrics
+
+```{r}
+# confusion matrix for training set
+conf_matrix_train_tree <- confusionMatrix(train_pred_tree, train_data$diagnosis)
+conf_matrix_train_tree
+```
+
+```{r}
+# confusion matrix for testing set
+conf_matrix_test_tree <- confusionMatrix(test_pred_tree, test_data$diagnosis)
+conf_matrix_test_tree
+```
+
+```{r}
+print(paste("Training Accuracy for the decision tree model:", 
+            conf_matrix_train_tree$overall['Accuracy']))
+print(paste("Testing Accuracy for the decision tree model:", 
+            conf_matrix_test_tree$overall['Accuracy']))
+```
+
+
+## Random Forest
+
+#### RF model building
+
+```{r}
+set.seed(2024)
+
+rf_diagnosis <- randomForest(diagnosis ~ . , 
+                   data = train_data, 
+                   importance = TRUE)
+
+rf_diagnosis
+
+summary(rf_diagnosis)
+
+varImpPlot(rf_diagnosis)
+```
+
+#### Random forest model prediction performance
+
+```{r}
+train_pred_rf <- predict(rf_diagnosis, 
+                         newdata = train_data, 
+                         type = "class")
+
+test_pred_rf <- predict(rf_diagnosis, 
+                        newdata = test_data, 
+                        type = "class")
+
+train_error_rf <- mean(train_pred_rf != train_data$diagnosis) 
+
+test_error_rf <- mean(test_pred_rf != test_data$diagnosis) 
+
+train_error_rf
+test_error_rf
+```
+
+
+#### Additional metrics
+
+```{r}
+conf_matrix_train_rf <- confusionMatrix(train_pred_rf, train_data$diagnosis)
+conf_matrix_train_rf
+```
+
+it shows a perfect prediction. (might be overfitting)
+
+
+```{r}
+conf_matrix_test_rf <- confusionMatrix(test_pred_rf, test_data$diagnosis)
+conf_matrix_test_rf
+```
+
+```{r}
+print(paste("Training Accuracy for the random forest model:", 
+            conf_matrix_train_rf$overall['Accuracy']))
+print(paste("Testing Accuracy for the random forest model:", 
+            conf_matrix_test_rf$overall['Accuracy']))
+```
+
+
+## logistics regression 
+
+```{r}
+Logit_full_model <- glm(diagnosis ~ ., family = binomial, data = train_data)
+
+summary(Logit_full_model)
+```
+
+
+```{r,warning = FALSE}
+Logit_reduced_model <- step(Logit_full_model, direction = "both", trace = FALSE)
+
+summary(Logit_reduced_model)
+```
+
+#### prediction error for logistic regression model
+
+```{r}
+pred_prob1 <- predict(Logit_reduced_model, newdata = train_data, type = "response")
+pred_class1 <- ifelse(pred_prob1 > 0.5, "M", "B")
+
+train_error_logit <- mean(pred_class1 != train_data$diagnosis) 
+train_error_logit
+
+pred_prob <- predict(Logit_reduced_model, newdata = test_data, type = "response")
+pred_class <- ifelse(pred_prob > 0.5, "M", "B")
+
+test_error_logit <- mean(pred_class != test_data$diagnosis) 
+test_error_logit
+```
+
+
+## 10-fold CV on Logistic Regression model
+
+```{r}
+train_control <- trainControl(
+  method = "cv", 
+  number = 10, 
+  savePredictions = TRUE, 
+  classProbs = TRUE)
+
+Logit_cv_model <- train(diagnosis ~ concavity_mean+texture_sd+area_sd+compactness_sd+concavity_sd+concave_points_sd+symmetry_sd+fractral_dim_sd+radius_largest+texture_largest+compactness_largest+symmetry_largest+fractral_dim_largest, 
+                        data = mydata, 
+                        method = "glm", 
+                        family = "binomial", 
+                        trControl = train_control)
+```
+
+```{r}
+predictions <- Logit_cv_model$pred
+
+# Calculate accuracy or other metrics if needed
+accuracy <- mean(predictions$obs == predictions$pred)
+
+accuracy
+```
+
+
+
+
+```{r}
+pred_prob_cv <- predict(Logit_cv_model, newdata = test_data, type = "prob")
+pred_class_cv <- ifelse(pred_prob_cv[, "M"] > 0.5, "M", "B")
+
+test_error_logit <- mean(pred_class_cv != test_data$diagnosis) 
+test_error_logit
+```
+
+
+```{r}
+pred_class_cv <- factor(pred_class_cv, levels = levels(test_data$diagnosis))
+
+conf_matrix_test_logit <- confusionMatrix(pred_class_cv, test_data$diagnosis)
+conf_matrix_test_logit
+```
+
+## Neural Network
+
+```{r}
+preProcValues <- preProcess(mydata, method = c("center", "scale"))
+data3 <- predict(preProcValues, mydata)
+
+set.seed(123)
+indexes <- sample(1:nrow(data3), size=0.7*nrow(mydata))
+train_data1 <- data3[indexes, ]
+test_data1 <- data3[-indexes, ]
+nn_model <- neuralnet(diagnosis ~ ., data = train_data1, hidden = c(9), linear.output = FALSE)
+
+test_predictions <- neuralnet::compute(nn_model, test_data1[,-which(names(test_data1) == "diagnosis")])
+predicted_probs <- test_predictions$net.result[, 2]  
+roc_NN <- roc(response = test_data1$diagnosis, predictor = predicted_probs,
+                  levels = c("B", "M"))
+
+auc_NN <- auc(roc_NN)
+```
+
+## SVM
+
+```{r}
+svm_prob <- read.csv("svm_prob.csv")
+svm_prob <- svm_prob[,-1]
+
+roc_svm <- roc(svm_prob$predict, svm_prob$M)
+auc_svm <- auc(roc_svm)
+```
+
+
+
+
+## ROC curves
+
+```{r}
+library(pROC)
+
+
+# logistic regression model
+roc_logit <- roc(test_data$diagnosis, pred_prob)
+auc_logit <- auc(roc_logit)
+
+# tree model 
+tree_probs <- predict(prune_tree, newdata = test_data, type = "vector")
+tree_prob <- tree_probs[, "M"]
+
+roc_tree <- roc(test_data$diagnosis, tree_prob)
+aoc_tree <- auc(roc_tree)
+
+# random forest model
+rf_probs <- predict(rf_diagnosis, newdata = test_data, type = "prob")
+rf_prob <- rf_probs[, "M"]
+
+roc_rf <- roc(test_data$diagnosis, rf_prob)
+auc_rf <- auc(roc_rf)
+
+rocobjs <- list("Logistic" = roc_logit, 
+                "Tree" = roc_tree,
+                "Random Forest" = roc_rf, 
+                "Neural Network" = roc_NN, 
+                "SVM" = roc_svm)
+
+auc_values <- paste(c("Logistic", "Tree", "Random Forest", "Neural Network", "SVM"), 
+                    "AUC =", 
+                    round(c(auc_logit, aoc_tree, auc_rf, auc_NN, auc_svm), 4))
+
+ggplot_roc <- ggroc(rocobjs, size = 0.8, alpha = 0.5) + 
+  scale_color_manual(values = c("black", "blue", "red","green", "purple"), 
+                     labels = auc_values) + 
+  labs(color = "Groups", 
+       title = "ROC Curves among different models", 
+       x = "False Positive Rate (FPR)",
+       y = "True Positive Rate (TPR)") + 
+  theme(legend.position = "bottom") + 
+  theme(legend.text = element_text(size = 4))
+
+
+
+ggplot_roc
+```
+
+
+
+
