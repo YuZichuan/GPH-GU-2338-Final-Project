@@ -1,0 +1,123 @@
+---
+title: "ML-NN"
+author: "LULU HE"
+date: "2024-04-29"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+```{r}
+library(neuralnet)
+library(caret)
+library(nnet)
+data <- read.csv("/Users/luluhe/Downloads/data.csv")
+data2 <- subset(data,select= - c(X, id))
+preProcValues <- preProcess(data2, method = c("center", "scale"))
+data3 <- predict(preProcValues, data2)
+
+set.seed(123)
+indexes <- sample(1:nrow(data3), size=0.7*nrow(data2))
+train_data_nnw <- data3[indexes, ]
+test_data_nnw <- data3[-indexes, ]
+
+nn <- neuralnet(diagnosis ~ ., data=train_data_nnw, hidden=c(5,3), linear.output=F)
+```
+
+```{r}
+plot(nn)
+```
+
+```{r}
+nn_predictions <- neuralnet::compute(nn, test_data_nnw[, -which(names(test_data_nnw) == "diagnosis")])
+predicted_values_nn <- nn_predictions$net.result
+
+predicted_probability_malignant <- predicted_values_nn[, 2]
+
+# threshold (usually 0.5 for binary classification)
+predicted_classes <- ifelse(predicted_probability_malignant > 0.5, 'M', 'B')
+```
+
+```{r}
+confusion <- confusionMatrix(as.factor(predicted_classes), as.factor(test_data_nnw$diagnosis), positive = 'M')
+print(confusion)
+```
+
+```{r}
+library(caret)
+library(nnet)
+
+data <- read.csv("/Users/luluhe/Downloads/data.csv")
+data2 <- subset(data, select = -c(X, id))  
+data2$diagnosis <- as.factor(data2$diagnosis)  
+
+preProcValues <- preProcess(data2, method = c("center", "scale"))
+data3 <- predict(preProcValues, data2)
+
+set.seed(123)
+train_control <- trainControl(
+  method = "cv",             
+  number = 10,                
+  savePredictions = "final",  
+  classProbs = TRUE,          
+  summaryFunction = twoClassSummary  
+)
+
+nn_model <- train(
+  diagnosis ~ .,
+  data = data3,
+  method = "nnet",  
+  trControl = train_control,
+  preProcess = "scale",
+  metric = "Accuracy",
+  tuneLength = 10, 
+  trace = FALSE,
+  MaxNWts = 10000,
+  linout = FALSE,
+  maxit = 200
+)
+
+print(nn_model)
+
+```
+
+```{r}
+set.seed(123)
+indexes <- createDataPartition(data3$diagnosis, p = 0.70, list = FALSE)
+train_data <- data3[indexes, ]
+test_data <- data3[-indexes, ]
+
+nn_model <- neuralnet(diagnosis ~ ., data = train_data, hidden = c(9), linear.output = F)
+test_pred <- predict(nn_model, test_data, type = "class")
+test_pred_malignant <- test_pred[, 2]
+predicted_classes_2 <- ifelse(test_pred_malignant > 0.5, 'M', 'B')
+confusionMatrix(as.factor(predicted_classes_2), as.factor(test_data$diagnosis), positive = 'M')
+```
+
+```{r}
+plot(nn_model)
+```
+
+
+```{r}
+library(pROC)
+library(neuralnet)
+set.seed(123)
+data_split <- createDataPartition(data3$diagnosis, p = 0.70, list = FALSE)
+train_data <- data3[data_split, ]
+test_data <- data3[-data_split, ]
+
+nn_model <- neuralnet(diagnosis ~ ., data = train_data, hidden = c(9), linear.output = FALSE)
+
+test_predictions <- neuralnet::compute(nn_model, test_data[,-which(names(test_data) == "diagnosis")])
+predicted_probs <- test_predictions$net.result[, 2]  
+roc_result <- roc(response = test_data$diagnosis, predictor = predicted_probs,
+                  levels = c("B", "M"))
+
+plot(roc_result, main="ROC Curve for neural network", col="#1c61b6")
+
+auc(roc_result)
+text(0.6, 0.4, paste("AUC =", round(auc(roc_result), 2)), col = "red")
+```
+
+
